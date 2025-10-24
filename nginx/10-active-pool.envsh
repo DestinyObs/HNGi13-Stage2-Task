@@ -1,0 +1,15 @@
+# Note: ensure this file uses LF line endings and no BOM to avoid shell parse issues.
+case "${ACTIVE_POOL:-blue}" in
+  blue)
+    export BLUE_BACKUP=""
+    export GREEN_BACKUP="backup"
+    ;;
+  green)
+    export BLUE_BACKUP="backup"
+    export GREEN_BACKUP=""
+    ;;
+  *)
+    echo "Invalid ACTIVE_POOL='${ACTIVE_POOL}'. Use 'blue' or 'green'." >&2
+    exit 1
+    ;;
+esac

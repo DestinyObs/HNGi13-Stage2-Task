@@ -1,0 +1,53 @@
+services:
+  nginx:
+    image: nginx:1.25-alpine
+    depends_on:
+      - app_blue
+      - app_green
+    ports:
+      - "8080:80"
+    environment:
+      # Controls which pool is primary (blue|green)
+      ACTIVE_POOL: ${ACTIVE_POOL:-blue}
+      # Envsubst template settings used by the official nginx entrypoint
+      NGINX_ENVSUBST_TEMPLATE_SUFFIX: ".template"
+      NGINX_ENVSUBST_OUTPUT_DIR: "/etc/nginx/conf.d"
+    volumes:
+      - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./nginx/10-active-pool.envsh:/docker-entrypoint.d/10-active-pool.envsh:ro
+      - ./nginx/render-and-reload.sh:/opt/nginx/render-and-reload.sh:ro
+    stop_signal: SIGQUIT
+
+  app_blue:
+    image: ${BLUE_IMAGE}
+    environment:
+      RELEASE_ID: ${RELEASE_ID_BLUE}
+      APP_POOL: blue
+      PORT: ${PORT:-3000}
+    ports:
+      - "8081:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${PORT:-3000}/healthz || exit 1"]
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 5s
+
+  app_green:
+    image: ${GREEN_IMAGE}
+    environment:
+      RELEASE_ID: ${RELEASE_ID_GREEN}
+      APP_POOL: green
+      PORT: ${PORT:-3000}
+    ports:
+      - "8082:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${PORT:-3000}/healthz || exit 1"]
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 5s
+
+networks:
+  default:
+    name: hngi13-stage2-net

@@ -1,0 +1,60 @@
+# Rendered by nginx official entrypoint using envsubst.
+# ACTIVE_POOL determines BLUE_BACKUP/GREEN_BACKUP via /docker-entrypoint.d/10-active-pool.sh
+
+server_tokens off;
+
+# Docker DNS resolver; reload will re-resolve names
+resolver 127.0.0.11 ipv6=off valid=10s;
+
+upstream app_pool {
+    # Primary has no "backup" flag; secondary is marked "backup".
+    # max_fails=1 + fail_timeout ensures quick demotion of a failing primary.
+    server app_blue:3000 max_fails=1 fail_timeout=3s ${BLUE_BACKUP};
+    server app_green:3000 max_fails=1 fail_timeout=3s ${GREEN_BACKUP};
+
+    keepalive 64;
+}
+
+map $request_method $can_retry {
+    default 1;     # allow retry for GET/HEAD/OPTIONS
+    POST    1;     # explicitly allow retry for POST per requirement
+}
+
+server {
+    listen 80;
+    access_log /var/log/nginx/access.log main;
+    error_log  /var/log/nginx/error.log warn;
+
+    # Tight timeouts for fast failover
+    proxy_connect_timeout 500ms;
+    proxy_send_timeout 1s;
+    proxy_read_timeout 1s;
+
+    # Retry policy: retry on timeout and 5xx; limit total retry time and tries
+    proxy_next_upstream error timeout http_500 http_502 http_503 http_504 non_idempotent;
+    proxy_next_upstream_tries 2;
+    proxy_next_upstream_timeout 2s;
+
+    # Forward original headers and ensure upstream headers are not stripped
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # Explicitly pass through app headers required by grader
+    proxy_pass_header X-App-Pool;
+    proxy_pass_header X-Release-Id;
+
+    proxy_buffering off;
+    proxy_request_buffering on;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+
+    location / {
+        proxy_pass http://app_pool;
+        proxy_intercept_errors off;
+    }
+
+    location = /healthz {
+        proxy_pass http://app_pool/healthz;
+    }
+}

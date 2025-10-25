@@ -78,3 +78,4 @@ bash scripts/verify.sh
 ```bash
 docker compose down -v
 ```
+**DevTo Article:** [Building a Self-Healing Blue/Green Deployment with Nginx & Docker](https://dev.to/destinyobs/building-a-self-healing-bluegreen-deployment-with-nginx-docker-3k12)

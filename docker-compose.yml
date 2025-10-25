@@ -16,6 +16,9 @@ services:
       - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
       - ./nginx/10-active-pool.envsh:/docker-entrypoint.d/10-active-pool.envsh:ro
       - ./nginx/render-and-reload.sh:/opt/nginx/render-and-reload.sh:ro
+    command: >
+      sh -c "chmod +x /docker-entrypoint.d/10-active-pool.envsh /opt/nginx/render-and-reload.sh &&
+             exec /docker-entrypoint.sh nginx -g 'daemon off;'"
     stop_signal: SIGQUIT
 
   app_blue:

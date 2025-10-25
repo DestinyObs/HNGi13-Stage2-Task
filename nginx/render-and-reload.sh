@@ -1,10 +1,6 @@
 #!/bin/sh
 set -eu
 
-# Allow on-the-fly toggling:
-#   docker compose exec nginx sh -lc "ACTIVE_POOL=green /opt/nginx/render-and-reload.sh"
-# Recomputes BLUE_BACKUP/GREEN_BACKUP, re-renders the template, and reloads Nginx.
-
 # Recompute backup flags based on ACTIVE_POOL
 case "${ACTIVE_POOL:-blue}" in
   blue)

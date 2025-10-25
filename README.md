@@ -65,9 +65,6 @@ docker compose exec nginx sh -lc "ACTIVE_POOL=blue /opt/nginx/render-and-reload.
 - `max_fails=1` + `fail_timeout=3s` rapidly marks a failing primary as down so backup is used consistently during the outage.
 - `proxy_next_upstream_tries=2` and `proxy_next_upstream_timeout=2s` keep total under 10s.
 
-## Security
-- `.env` is ignored by git (see .gitignore). Don’t commit secrets.
-- Never share tokens publicly. If exposed, revoke and rotate immediately.
 
 ## One-shot full verification (optional)
 ```bash

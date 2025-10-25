@@ -12,9 +12,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 # Config
-GATEWAY="http://localhost:8080"
-BLUE="http://localhost:8081"
-GREEN="http://localhost:8082"
+GATEWAY="http://98.88.21.118:8080"
+BLUE="http://98.88.21.118:8081"
+GREEN="http://98.88.21.118:8082"
 CURL_MAX_TIME=3   # seconds per request cap (keep well under 10s requirement)
 
 # Load expected values from .env if present

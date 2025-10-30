@@ -83,8 +83,11 @@ def send_alert(alert_type, title, body):
 def _write_outbox(alert_type, payload):
     try:
         os.makedirs(os.path.dirname(OUTBOX), exist_ok=True)
+        # write payload as pretty JSON so screenshots/readers can inspect easily
         with open(OUTBOX, 'a', encoding='utf-8') as f:
-            f.write(f"{datetime.utcnow().isoformat()}Z\t{alert_type}\t{json.dumps(payload)}\n")
+            f.write(f"{datetime.utcnow().isoformat()}Z\t{alert_type}\t")
+            f.write(json.dumps(payload, indent=2, ensure_ascii=False))
+            f.write("\n")
         logger.info('Wrote alert to outbox (%s)', OUTBOX)
     except Exception:
         logger.exception('Failed to write outbox')
@@ -174,7 +177,17 @@ def process_record(data, raw_line):
                 body_lines.append(f'Upstream status: {upstream_status}')
             if upstream_addr:
                 body_lines.append(f'Upstream addr: {upstream_addr}')
-            body_lines.append(f'Sample: {raw_line.strip()}')
+            # try to pretty-print the sample JSON for readability
+            try:
+                sample_json = json.loads(raw_line)
+                pretty_sample = json.dumps(sample_json, indent=2, ensure_ascii=False)
+                # present sample as a fenced code block so Slack preserves formatting
+                body_lines.append('Sample:')
+                body_lines.append('```json')
+                body_lines.append(pretty_sample)
+                body_lines.append('```')
+            except Exception:
+                body_lines.append(f'Sample: {raw_line.strip()}')
             body = '\n'.join(body_lines)
             # update last_seen_pool immediately to avoid repeated alerts for the same flip
             last_seen_pool = pool
@@ -183,18 +196,45 @@ def process_record(data, raw_line):
     # error-rate alert
     if total >= 10 and error_rate > ERROR_RATE_THRESHOLD:
         title = f'High error rate: {error_rate:.2f}% over last {total} requests'
-        # include top upstream addrs if present
+        # compute per-upstream error counts more accurately
         addrs = Counter()
-        # window entries are (status, pool, upstream_status, raw_line, ts)
-        for _, _, _, line_text, _ in window:
+        for entry in window:
+            s, p, us, line_text, _ = entry
             try:
                 d = json.loads(line_text)
-                a = d.get('upstream_addr') or 'unknown'
             except Exception:
-                a = 'unknown'
-            addrs[a] += 1
-        top = addrs.most_common(3)
-        body = f'{title}\nTop upstreams: {top}\nSample: {raw_line.strip()}'
+                d = {}
+            addr_field = d.get('upstream_addr') if isinstance(d, dict) else None
+            # normalize into individual addresses
+            if addr_field:
+                parts = [a.strip() for a in str(addr_field).split(',') if a.strip()]
+            else:
+                parts = ['unknown']
+            # count this entry towards each upstream seen
+            for a in parts:
+                addrs[a] += 1
+
+        top = addrs.most_common(5)
+
+        body_lines = [title]
+        if top:
+            # produce a friendly list rather than Python repr
+            body_lines.append('Top upstreams:')
+            for addr, cnt in top:
+                body_lines.append(f'- {addr}: {cnt}')
+
+        # include a pretty-printed sample
+        try:
+            sample_json = json.loads(raw_line)
+            pretty_sample = json.dumps(sample_json, indent=2, ensure_ascii=False)
+            body_lines.append('Sample:')
+            body_lines.append('```json')
+            body_lines.append(pretty_sample)
+            body_lines.append('```')
+        except Exception:
+            body_lines.append(f'Sample: {raw_line.strip()}')
+
+        body = '\n'.join(body_lines)
         send_alert('error_rate', title, body)
 
 

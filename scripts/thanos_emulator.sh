@@ -161,3 +161,73 @@ curl ${CURL_FLAGS} -m "$CURL_MAX_TIME" -X POST "$BLUE/chaos/stop" >/dev/null || 
 
 pass "All checks passed (Baseline, Immediate Switch, Stability, Headers)."
 echo "GRADE: PASS"
+
+# --- Stage 3 checks: observability & alerts ---
+log "Running Stage-3 checks: structured logs and watcher alerts (outbox mode)"
+
+# helper: wait for a file to contain a pattern (simple timeout loop)
+wait_for_file_contains() {
+  # $1=file $2=pattern $3=timeout
+  local file="$1" pattern="$2" timeout=${3:-10}
+  local start=$(date +%s)
+  while true; do
+    if [[ -f "$file" ]]; then
+      if grep -q -E "$pattern" "$file"; then
+        return 0
+      fi
+    fi
+    now=$(date +%s)
+    if (( now - start >= timeout )); then
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+# 1) check Nginx structured logs contain required JSON fields
+LOG_FILE="$(pwd)/logs/access.log"
+log "Checking structured nginx logs at $LOG_FILE"
+if [[ ! -f "$LOG_FILE" ]]; then
+  fail "Nginx access log not found: $LOG_FILE"
+fi
+
+# Look for a recent JSON log line containing pool, release, upstream_status and upstream_addr
+if tail -n 200 "$LOG_FILE" | grep -E '"pool"|"release"|"upstream_status"|"upstream_addr"' >/dev/null; then
+  pass "Structured nginx log fields appear present"
+else
+  fail "Structured nginx log does not contain expected fields (pool/release/upstream_status/upstream_addr)"
+fi
+
+# 2) Wait for watcher outbox to receive a failover alert (created when failover occurred above)
+OUTBOX="$(pwd)/watcher/outbox.log"
+log "Waiting up to 15s for a failover alert in $OUTBOX (outbox mode)"
+if wait_for_file_contains "$OUTBOX" "\tfailover\t" 15; then
+  pass "Failover alert found in watcher outbox"
+else
+  fail "Failover alert not found in watcher outbox within timeout"
+fi
+
+# 3) Generate an error-rate alert: enable error mode on both apps and flood requests so watcher sees > threshold
+log "Starting error-rate simulation: enabling error mode on both apps and sending many requests"
+curl ${CURL_FLAGS} -m "$CURL_MAX_TIME" -X POST "$BLUE/chaos/start?mode=error" >/dev/null || true
+curl ${CURL_FLAGS} -m "$CURL_MAX_TIME" -X POST "$GREEN/chaos/start?mode=error" >/dev/null || true
+
+FLOOD_N=${FLOOD_N:-250}
+for i in $(seq 1 "$FLOOD_N"); do
+  curl ${CURL_FLAGS} --connect-timeout "$CONNECT_TIMEOUT" -m "$CURL_MAX_TIME" --retry "$RETRIES" --retry-all-errors -sS -o /dev/null "$GATEWAY/version" || true
+  sleep 0.04
+done
+
+log "Waiting up to 20s for an error-rate alert in $OUTBOX"
+if wait_for_file_contains "$OUTBOX" "\terror_rate\t" 20; then
+  pass "Error-rate alert found in watcher outbox"
+else
+  fail "Error-rate alert not found in watcher outbox within timeout"
+fi
+
+# Cleanup chaos (best-effort)
+curl ${CURL_FLAGS} -m "$CURL_MAX_TIME" -X POST "$BLUE/chaos/stop" >/dev/null || true
+curl ${CURL_FLAGS} -m "$CURL_MAX_TIME" -X POST "$GREEN/chaos/stop" >/dev/null || true
+
+pass "Stage-3 checks passed (structured logs + outbox alerts)"
+echo "GRADE: PASS"

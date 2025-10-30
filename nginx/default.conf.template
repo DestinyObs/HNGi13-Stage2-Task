@@ -3,6 +3,21 @@
 
 server_tokens off;
 
+# Structured JSON access log (used by the alert watcher)
+log_format main_json escape=json '{'
+        '\"time\":\"$time_iso8601\",'
+        '\"remote_addr\":\"$remote_addr\",'
+        '\"method\":\"$request_method\",'
+        '\"uri\":\"$request_uri\",'
+        '\"status\":$status,'
+        '\"pool\":\"$upstream_http_x_app_pool\",'
+        '\"release\":\"$upstream_http_x_release_id\",'
+        '\"upstream_status\":\"$upstream_status\",'
+        '\"upstream_addr\":\"$upstream_addr\",'
+        '\"request_time\":$request_time,'
+        '\"upstream_response_time\":\"$upstream_response_time\"'
+    '}';
+
 # Docker DNS resolver; reload will re-resolve names
 resolver 127.0.0.11 ipv6=off valid=10s;
 
@@ -22,7 +37,7 @@ map $request_method $can_retry {
 
 server {
     listen 80;
-    access_log /var/log/nginx/access.log main;
+    access_log /var/log/nginx/access.log main_json;
     error_log  /var/log/nginx/error.log warn;
 
     # Tight timeouts for fast failover

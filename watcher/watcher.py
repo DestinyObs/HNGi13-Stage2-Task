@@ -34,7 +34,7 @@ logging.basicConfig(stream=sys.stdout, level=logging.INFO, format='%(asctime)s %
 logger = logging.getLogger('watcher')
 
 # state
-window = deque(maxlen=WINDOW_SIZE)  # each entry: (status:int, pool:str, raw_line:str, ts:float)
+window = deque(maxlen=WINDOW_SIZE)  # each entry: (status:int, pool:str, upstream_status:str, raw_line:str, ts:float)
 # initialize last_seen_pool from ACTIVE_POOL if provided to avoid false-positive
 # alerts before any log line is seen
 last_seen_pool = os.environ.get('ACTIVE_POOL')
@@ -130,11 +130,31 @@ def process_record(data, raw_line):
     upstream_status = data.get('upstream_status')
     upstream_addr = data.get('upstream_addr')
     ts = now_ts()
-    window.append((status, pool, raw_line, ts))
+    # store upstream_status (string like "500, 200") so error-rate can count upstream 5xx
+    window.append((status, pool, upstream_status, raw_line, ts))
 
     # compute error rate
     total = len(window)
-    errors = sum(1 for s, _, _, _ in window if s >= 500)
+    # Count an entry as error if the client-visible status is >=500 OR any upstream_status code is >=500
+    def entry_is_error(entry):
+        s, _, us, *_ = entry
+        try:
+            if int(s) >= 500:
+                return True
+        except Exception:
+            pass
+        # upstream_status can be comma-separated (e.g. "500, 200") or a single value
+        if us:
+            try:
+                parts = [p.strip() for p in str(us).split(',') if p.strip()]
+                for p in parts:
+                    if int(p) >= 500:
+                        return True
+            except Exception:
+                pass
+        return False
+
+    errors = sum(1 for entry in window if entry_is_error(entry))
     error_rate = (errors / total * 100) if total > 0 else 0.0
 
     # pool flip detection

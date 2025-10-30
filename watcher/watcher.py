@@ -185,7 +185,8 @@ def process_record(data, raw_line):
         title = f'High error rate: {error_rate:.2f}% over last {total} requests'
         # include top upstream addrs if present
         addrs = Counter()
-        for _, _, line_text, _ in window:
+        # window entries are (status, pool, upstream_status, raw_line, ts)
+        for _, _, _, line_text, _ in window:
             try:
                 d = json.loads(line_text)
                 a = d.get('upstream_addr') or 'unknown'

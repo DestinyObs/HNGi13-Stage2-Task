@@ -60,6 +60,7 @@ services:
       - .env
     environment:
       - LOG_PATH=/var/log/nginx/access.log
+      - OUTBOX_PATH=/watcher/outbox.log
     command: ["sh", "-c", "pip install -r /watcher/requirements.txt && python /watcher/watcher.py"]
     restart: unless-stopped
     networks:

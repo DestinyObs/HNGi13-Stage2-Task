@@ -36,6 +36,37 @@ Error definition (important): the watcher treats an entry as an "error" when eit
 - Trigger: percent of errors in the last `WINDOW_SIZE` requests >= `ERROR_RATE_THRESHOLD`.
 - Contents: window size, error count & percentage, top upstream addresses (by error count), sample line.
 
+## Getting started — bring the stack up (copy/paste)
+
+Run these steps on the server or in the workspace where the repository lives. They cover creating a local `.env`, building images (if needed), starting the Compose stack, and verifying containers are running.
+
+Prerequisites:
+- Docker & Docker Compose installed on the host.
+- A copy of this repository on the host (git clone or uploaded files).
+- A local `.env` file in the repo root (do NOT commit your real webhook). See the `Security` section below.
+
+Quick start commands (bash):
+
+```bash
+# 1) create .env from example (if present) and edit the values
+cp .env.example .env 2>/dev/null || true
+# Edit .env and set SLACK_WEBHOOK_URL and any overrides (WINDOW_SIZE, ERROR_RATE_THRESHOLD, ACTIVE_POOL)
+${EDITOR:-nano} .env
+
+# 2) start the stack
+docker compose up -d
+
+# 3) verify containers are healthy and running
+docker compose ps
+docker compose logs --no-color --tail 50 nginx
+docker compose logs --no-color --tail 50 alert_watcher
+```
+
+Notes:
+- If you make changes to the watcher code (`watcher/`) you can rebuild the watcher image specifically with `docker compose build alert_watcher` and then `docker compose up -d --no-deps --force-recreate alert_watcher` to pick up code changes.
+- The `nginx` service writes its access log to the `logs/` folder (mounted into the `alert_watcher` container); the watcher tails `/var/log/nginx/access.log` inside the container using that mount.
+
+
 ## Verification: Failover alert (copy/paste)
 
 Run these commands on the server (bash). They recreate the watcher, flip the active pool via the chaos endpoint, exercise the gateway and then show the single latest failover alert (clean for a screenshot).

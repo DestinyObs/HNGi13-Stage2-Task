@@ -16,6 +16,7 @@ services:
       - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
       - ./nginx/10-active-pool.envsh:/docker-entrypoint.d/10-active-pool.envsh:ro
       - ./nginx/render-and-reload.sh:/opt/nginx/render-and-reload.sh:ro
+      - ./logs:/var/log/nginx:rw
     stop_signal: SIGQUIT
 
   app_blue:
@@ -47,6 +48,21 @@ services:
       timeout: 2s
       retries: 3
       start_period: 5s
+  alert_watcher:
+    image: python:3.11-slim
+    depends_on:
+      - nginx
+    volumes:
+      - ./logs:/var/log/nginx:ro
+      - ./watcher:/watcher:ro
+    env_file:
+      - .env
+    environment:
+      - LOG_PATH=/var/log/nginx/access.log
+    command: ["sh", "-c", "pip install -r /watcher/requirements.txt && python /watcher/watcher.py"]
+    restart: unless-stopped
+    networks:
+      - default
 
 networks:
   default:

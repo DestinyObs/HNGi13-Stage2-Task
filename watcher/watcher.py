@@ -35,7 +35,11 @@ logger = logging.getLogger('watcher')
 
 # state
 window = deque(maxlen=WINDOW_SIZE)  # each entry: (status:int, pool:str, raw_line:str, ts:float)
-last_seen_pool = None
+# initialize last_seen_pool from ACTIVE_POOL if provided to avoid false-positive
+# alerts before any log line is seen
+last_seen_pool = os.environ.get('ACTIVE_POOL')
+if last_seen_pool == '':
+    last_seen_pool = None
 last_alert_ts = {}  # alert_type -> timestamp
 
 
@@ -64,6 +68,8 @@ def send_alert(alert_type, title, body):
                 logger.info('Alert %s posted to Slack', alert_type)
             else:
                 logger.warning('Slack returned status %s: %s', r.status_code, r.text)
+                # persist to outbox so operators still see it when Slack is misconfigured
+                _write_outbox(alert_type, payload)
         except Exception as e:
             logger.exception('Failed to post alert to Slack: %s', e)
             _write_outbox(alert_type, payload)
@@ -89,8 +95,30 @@ def parse_line(line):
         data = json.loads(line)
     except Exception:
         # fallback: try to extract status and uri with crude parsing
-        logger.debug('Failed to parse JSON: %s', line.strip())
-        return None
+        logger.debug('Failed to parse JSON; attempting fallback parse: %s', line.strip())
+        # Fallback: very small best-effort extraction of status and pool/upstream fields
+        out = {}
+        try:
+            # status: look for "status":123 or "status": 123
+            import re
+            m = re.search(r'"status"\s*:\s*(\d{3})', line)
+            if m:
+                out['status'] = int(m.group(1))
+            m = re.search(r'"pool"\s*:\s*"([^"]+)"', line)
+            if m:
+                out['pool'] = m.group(1)
+            m = re.search(r'"release"\s*:\s*"([^"]+)"', line)
+            if m:
+                out['release'] = m.group(1)
+            m = re.search(r'"upstream_addr"\s*:\s*"([^"]+)"', line)
+            if m:
+                out['upstream_addr'] = m.group(1)
+        except Exception:
+            logger.debug('Fallback regex parse failed')
+        # If we couldn't parse anything useful, return None
+        if not out:
+            return None
+        return out
     return data
 
 
@@ -98,6 +126,9 @@ def process_record(data, raw_line):
     global last_seen_pool
     status = int(data.get('status', 0))
     pool = data.get('pool')
+    release = data.get('release')
+    upstream_status = data.get('upstream_status')
+    upstream_addr = data.get('upstream_addr')
     ts = now_ts()
     window.append((status, pool, raw_line, ts))
 
@@ -109,13 +140,25 @@ def process_record(data, raw_line):
     # pool flip detection
     if pool:
         if last_seen_pool is None:
+            # first observation
             last_seen_pool = pool
         elif pool != last_seen_pool:
             title = f'Failover detected: {last_seen_pool} → {pool}'
-            body = f'Failover detected at {datetime.utcnow().isoformat()}Z\nWindow={total}, errors={errors} ({error_rate:.2f}%)\nSample: {raw_line.strip()}'
-            sent = send_alert('failover', title, body)
-            if sent:
-                last_seen_pool = pool
+            body_lines = [
+                f'Failover detected at {datetime.utcnow().isoformat()}Z',
+                f'Window={total}, errors={errors} ({error_rate:.2f}%)',
+            ]
+            if release:
+                body_lines.append(f'Release: {release}')
+            if upstream_status:
+                body_lines.append(f'Upstream status: {upstream_status}')
+            if upstream_addr:
+                body_lines.append(f'Upstream addr: {upstream_addr}')
+            body_lines.append(f'Sample: {raw_line.strip()}')
+            body = '\n'.join(body_lines)
+            # update last_seen_pool immediately to avoid repeated alerts for the same flip
+            last_seen_pool = pool
+            send_alert('failover', title, body)
 
     # error-rate alert
     if total >= 10 and error_rate > ERROR_RATE_THRESHOLD:
@@ -135,27 +178,29 @@ def process_record(data, raw_line):
 
 
 def tail_file(path):
-    # open and seek to end
-    try:
-        with open(path, 'r', encoding='utf-8') as fh:
-            fh.seek(0, os.SEEK_END)
-            logger.info('Tailing %s', path)
-            while True:
-                line = fh.readline()
-                if not line:
-                    time.sleep(0.5)
-                    continue
-                data = parse_line(line)
-                if data is None:
-                    continue
-                process_record(data, line)
-    except FileNotFoundError:
-        logger.error('Log file not found: %s', path)
-        # keep retrying until file appears
-        while True:
+    # Open and tail the file. If file doesn't exist yet, retry non-recursively.
+    logger.info('Tailing %s', path)
+    while True:
+        try:
+            with open(path, 'r', encoding='utf-8') as fh:
+                fh.seek(0, os.SEEK_END)
+                while True:
+                    line = fh.readline()
+                    if not line:
+                        time.sleep(0.5)
+                        continue
+                    data = parse_line(line)
+                    if data is None:
+                        continue
+                    process_record(data, line)
+        except FileNotFoundError:
+            logger.warning('Log file not found: %s; retrying in 1s', path)
             time.sleep(1)
-            if os.path.exists(path):
-                return tail_file(path)
+            continue
+        except Exception:
+            logger.exception('Error while tailing file; retrying in 1s')
+            time.sleep(1)
+            continue
 
 
 def main():

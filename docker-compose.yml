@@ -54,7 +54,6 @@ services:
       - nginx
     volumes:
       - ./logs:/var/log/nginx:ro
-      # watcher needs write access to create outbox.log when SLACK_WEBHOOK_URL is empty
       - ./watcher:/watcher:rw
     env_file:
       - .env

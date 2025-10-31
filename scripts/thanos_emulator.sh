@@ -9,6 +9,35 @@
 
 set -euo pipefail
 
+# Small CLI: support --stage2 (only baseline/failover checks) and --stage3 (include watcher/outbox checks)
+MODE="stage3"
+FLOOD_N=${FLOOD_N:-250}
+
+usage() {
+  cat <<EOF
+Usage: $0 [--stage2|--stage3] [--host <host>] [--flood N]
+
+Options:
+  --stage2        Run only Stage-2 checks (baseline, immediate switch, stability)
+  --stage3        Run Stage-2 and Stage-3 (observability + watcher outbox alerts) [default]
+  --host <host>   Target host (defaults to localhost)
+  --flood N       Number of flood requests for error-rate simulation (default: ${FLOOD_N})
+  -h, --help      Show this help message
+EOF
+  exit 1
+}
+
+while [[ ${#} -gt 0 ]]; do
+  case "$1" in
+    --stage2) MODE="stage2"; shift ;;
+    --stage3) MODE="stage3"; shift ;;
+    --host) HOST="$2"; shift 2 ;;
+    --flood) FLOOD_N="$2"; shift 2 ;;
+    -h|--help) usage ;;
+    *) echo "Unknown arg: $1"; usage ;;
+  esac
+done
+
 HOST="${HOST:-localhost}"
 GATEWAY="http://${HOST}:8080"
 BLUE="http://${HOST}:8081"
@@ -159,10 +188,16 @@ log "Green percentage: ${green_pct}% (${green_count}/${FAILOVER_N})"
 # Cleanup chaos (best-effort)
 curl ${CURL_FLAGS} -m "$CURL_MAX_TIME" -X POST "$BLUE/chaos/stop" >/dev/null || true
 
+# Stage-2 finished
 pass "All checks passed (Baseline, Immediate Switch, Stability, Headers)."
 echo "GRADE: PASS"
 
-# --- Stage 3 checks: observability & alerts ---
+# If user requested stage3 run the observability checks; otherwise exit successfully here
+if [[ "${MODE}" != "stage3" ]]; then
+  log "Stage-2 complete; skipping Stage-3 observability checks as requested."
+  exit 0
+fi
+
 log "Running Stage-3 checks: structured logs and watcher alerts (outbox mode)"
 
 # helper: wait for a file to contain a pattern (simple timeout loop)
@@ -201,7 +236,7 @@ fi
 # 2) Wait for watcher outbox to receive a failover alert (created when failover occurred above)
 OUTBOX="$(pwd)/watcher/outbox.log"
 log "Waiting up to 15s for a failover alert in $OUTBOX (outbox mode)"
-if wait_for_file_contains "$OUTBOX" "\tfailover\t" 15; then
+if wait_for_file_contains "$OUTBOX" '"failover"' 15; then
   pass "Failover alert found in watcher outbox"
 else
   fail "Failover alert not found in watcher outbox within timeout"
@@ -219,7 +254,7 @@ for i in $(seq 1 "$FLOOD_N"); do
 done
 
 log "Waiting up to 20s for an error-rate alert in $OUTBOX"
-if wait_for_file_contains "$OUTBOX" "\terror_rate\t" 20; then
+if wait_for_file_contains "$OUTBOX" '"error_rate"' 20; then
   pass "Error-rate alert found in watcher outbox"
 else
   fail "Error-rate alert not found in watcher outbox within timeout"
